@@ -1,5 +1,6 @@
 mod p2p;
 mod blockchain;
+mod transactions;
 
 use futures::{
     prelude::*,
@@ -12,6 +13,7 @@ use std::error::Error;
 use async_std::{io, task};
 use p2p::{BlockChainBehavior, ChainRequest};
 use serde_json;
+use crate::transactions::Transaction;
 
 #[async_std::main]
 async fn main() -> Result<(), Box<dyn Error>> {
@@ -39,27 +41,46 @@ async fn main() -> Result<(), Box<dyn Error>> {
         select! {
             line = stdin.select_next_some() => {
                 match line?.as_str() {
-                    cmd if cmd.starts_with("send") => swarm.behaviour_mut().floodsub.publish(p2p::TOPIC.clone(), cmd.strip_prefix("send ").expect("can't parse message")),
-                    "print blocks" => { println!("{}", serde_json::to_string_pretty(&swarm.behaviour().blockchain).unwrap()) },
-                    cmd if cmd.starts_with("mine block ") => { 
+                    "/blocks" => { println!("Blocks: {}", serde_json::to_string_pretty(&swarm.behaviour().blockchain.blocks).unwrap()) },
+                    "/mempool" => { println!("Mempool: {}", serde_json::to_string_pretty(&swarm.behaviour().blockchain.mempool).unwrap()) },
+                    "/balance" => { println!("Balance: {}", &swarm.behaviour().blockchain.get_balance(&p2p::PEER_ID.clone().to_string())); }
+                    "/mine" => { 
                         let last_block = &swarm.behaviour().blockchain.blocks.last().unwrap();
                         let block = blockchain::Block::mine(
                             last_block.id + 1,
                             last_block.hash.clone(),
                             p2p::PEER_ID.clone().to_string(),
-                            cmd.strip_prefix("mine block ").unwrap().to_string()
+                            swarm.behaviour().blockchain.mempool.clone()
+                            // cmd.strip_prefix("/mine ").unwrap().to_string()
                         );
+
                         println!("Block #{} mined!", block.id);
                         println!("{}", serde_json::to_string_pretty(&block).unwrap());
                         
                         swarm.behaviour_mut().floodsub.publish(p2p::TOPIC.clone(), serde_json::to_string(&block).unwrap());
                         swarm.behaviour_mut().blockchain.add_block(block);
                     },
-                    "chain request" => {
+                    "/chain_request" => {
                         swarm
                             .behaviour_mut()
                             .floodsub
                             .publish(p2p::TOPIC.clone(), serde_json::to_string(&ChainRequest { from: p2p::PEER_ID.to_string() }).unwrap());
+                    },
+                    cmd if cmd.starts_with("/tx") => {
+                        let args: Vec<&str> = cmd.split_ascii_whitespace().collect();
+                        let tx = Transaction {
+                            from: p2p::PEER_ID.clone().to_string(),
+                            to: args[1].to_string(),
+                            value: args[2].parse().unwrap()
+                        };
+                        swarm
+                            .behaviour_mut()
+                            .floodsub
+                            .publish(p2p::TOPIC.clone(), serde_json::to_string(&tx).unwrap());
+                        swarm
+                            .behaviour_mut()
+                            .blockchain
+                            .add_transaction(tx); //add transaction to local mempool
                     }
                     _ => {}
                 }

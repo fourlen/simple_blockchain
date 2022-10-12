@@ -6,6 +6,7 @@ use libp2p::{identity, PeerId, mdns::Mdns, floodsub::{Floodsub, FloodsubEvent, T
 use serde::{Serialize, Deserialize};
 use crate::blockchain::{BlockChain, Block};
 use once_cell::sync::Lazy;
+use crate::transactions::Transaction;
 
 
 pub static KEYPAIR: Lazy<identity::Keypair> = Lazy::new(identity::Keypair::generate_secp256k1);
@@ -37,7 +38,20 @@ impl NetworkBehaviourEventProcess<FloodsubEvent> for BlockChainBehavior {
     fn inject_event(&mut self, event: FloodsubEvent) {
         match event {
             FloodsubEvent::Message(message) => {
-                if let Ok(msg) = serde_json::from_slice::<ChainRequest>(&message.data) {
+                if let Ok(block) = serde_json::from_slice::<Block>(&message.data) {
+                    println!("Received block from {}", &message.source);
+                    self.blockchain.add_block(block); //почему мы не можем поменять поле miner и разослать всем наш блок, чтобы стать майнером?
+                } 
+                else if let Ok(transaction) = serde_json::from_slice::<Transaction>(&message.data) {
+                    println!("New transaction from {}", &message.source);
+                    if transaction.from == message.source.to_string() {
+                        self.blockchain.add_transaction(transaction);
+                    }
+                    else {
+                        println!("Wrong signature");
+                    }
+                }
+                else if let Ok(msg) = serde_json::from_slice::<ChainRequest>(&message.data) {
                     println!("Chain request from {}", &msg.from);
                     self
                         .floodsub
@@ -52,12 +66,8 @@ impl NetworkBehaviourEventProcess<FloodsubEvent> for BlockChainBehavior {
                         self.blockchain.choose_chain(msg.blockchain);
                     }
                 }
-                else if let Ok(block) = serde_json::from_slice::<Block>(&message.data) {
-                    println!("Received block from {}", &message.source);
-                    self.blockchain.add_block(block); //почему мы не можем поменять поле miner и разослать всем наш блок, чтобы стать майнером?
-                } 
             },
-            _ => {}
+            _ => { println!("unknown message: {:#?}", event); }
         }
     }
 }

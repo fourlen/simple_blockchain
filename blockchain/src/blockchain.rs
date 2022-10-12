@@ -2,7 +2,7 @@ use serde::{Serialize, Deserialize};
 use serde_json;
 use sha2::{Digest, Sha256};
 use chrono;
-
+use crate::transactions::{Transaction};
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct Block {
@@ -12,37 +12,40 @@ pub struct Block {
     pub previous_block_hash: String,
     pub hash: String,
     pub miner: String,
-    pub data: String
+    pub transactions: Vec<Transaction>
+    // pub data: String
 }
 
 
 #[derive(Serialize, Deserialize, Debug, Clone)]
 pub struct BlockChain {
-    pub blocks: Vec<Block>
+    pub blocks: Vec<Block>,
+    pub mempool: Vec<Transaction>
 }
 
 
 pub fn calculate_hash(data: String) -> String {
     let mut hasher = Sha256::new();
     hasher.update(data.as_bytes());
-    format!("{:x}", hasher.finalize())
+    format!("0x{:x}", hasher.finalize())
 }
 
-pub fn calculate_block_hash(id: u64, timestamp: i64, nonce: u64, previous_block_hash: &String, miner: &String, data: &String) -> String {
+pub fn calculate_block_hash(id: u64, timestamp: i64, nonce: u64, previous_block_hash: &String, miner: &String, transactions: &Vec<Transaction>) -> String {
     calculate_hash(serde_json::json!({
         "id": id,
         "timestamp": timestamp,
         "nonce": nonce,
         "previous_block_hash": previous_block_hash,
         "miner": miner,
-        "data": data
+        "transactions": transactions
     }).to_string())
 }
 
 impl Block {
-    pub fn mine(id: u64, previous_block_hash: String, miner: String, data: String) -> Self {
+    pub fn mine(id: u64, previous_block_hash: String, miner: String, mut transactions: Vec<Transaction>) -> Self {
         println!("Mining block...");
         let mut nonce = 0u64;
+        transactions.push(Transaction { from: "BAZA".to_string(), to: miner.clone(), value: 1000 });
 
         loop {
 
@@ -54,10 +57,10 @@ impl Block {
                 nonce,
                 &previous_block_hash,
                 &miner,
-                &data
+                &transactions
             );
             print!("\r{}", hash);
-            if hash.starts_with("000") {
+            if hash.starts_with("0x000") {
                 println!();
                 return Self {
                     id,
@@ -66,7 +69,7 @@ impl Block {
                     previous_block_hash,
                     hash,
                     miner, 
-                    data
+                    transactions
                 };
             }
             nonce += 1;
@@ -77,11 +80,12 @@ impl Block {
 
 impl BlockChain {
     pub fn new() -> Self {
-        let mut blockchain = Self { blocks: vec![] };
+        let mut blockchain = Self { blocks: vec![], mempool: Vec::new() };
 
         let previous_block_hash = String::from("0x0000000000000000000000000000000000000000000000000000000000000000");
         let miner = String::from("BAZA");
-        let data = String::from("GENESIS");
+        let transactions = Vec::new();
+        // let data = String::from("GENESIS");
 
         let hash = calculate_block_hash(
             0,
@@ -89,7 +93,7 @@ impl BlockChain {
             0,
             &previous_block_hash,
             &miner,
-            &data
+            &transactions
         );
 
         let genesis_block = Block {
@@ -99,7 +103,7 @@ impl BlockChain {
             previous_block_hash: String::from("0x0000000000000000000000000000000000000000000000000000000000000000"),
             hash: hash,
             miner: miner, 
-            data: data
+            transactions: transactions
         };
 
         blockchain.blocks.push(genesis_block);
@@ -119,7 +123,7 @@ impl BlockChain {
             println!("Block #{} has wrong prev block hash", new_block.id);
             return false;
         }
-        else if !new_block.hash.starts_with("000") {
+        else if !new_block.hash.starts_with("0x000") {
             println!("Block #{} has wrong block difficulty", new_block.id);
             return false;
         }
@@ -128,10 +132,15 @@ impl BlockChain {
                                 new_block.nonce, 
                                 &new_block.previous_block_hash, 
                                 &new_block.miner, 
-                                &new_block.data)
+                                &new_block.transactions)
         {
             println!("Block #{} has wrong hash", new_block.id);
             return false;
+        }
+        for transaction in &new_block.transactions {
+            if !self.is_transaction_valid(&transaction) {
+                return false;
+            }
         }
         true
     }
@@ -152,6 +161,7 @@ impl BlockChain {
         if self.is_block_valid(&block, latest_block) {
             println!("Block #{} added to the blockchain", {block.id});
             self.blocks.push(block);
+            self.mempool = Vec::new();
         }
     }
 
@@ -170,5 +180,37 @@ impl BlockChain {
             println!("Remote chain better");
         }
         println!("Our chain better");
+    }
+
+    pub fn get_balance(&self, address: &String) -> u64 {
+        let mut balance = 0u64;
+        for block in &self.blocks {
+            for transaction in &block.transactions {
+                if &transaction.to == address {
+                    balance += transaction.value;
+                }
+                else if &transaction.from == address {
+                    balance -= transaction.value;
+                }
+            }
+        }
+        balance
+    }
+
+    pub fn is_transaction_valid(&self, transaction: &Transaction) -> bool {
+        if &transaction.from == "BAZA" && &transaction.value == &1000u64 ||
+        self.get_balance(&transaction.from) >= transaction.value {
+            return true;
+        }
+        false
+    }
+
+    pub fn add_transaction(&mut self, transaction: Transaction) {
+        if self.is_transaction_valid(&transaction) {
+            self.mempool.push(transaction);
+        }
+        else {
+            println!("Transaction invalid");
+        }
     }
 }
